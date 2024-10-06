@@ -1,75 +1,90 @@
-/* A simple echo client using TCP */
 #include <stdio.h>
-#include <netdb.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <stdlib.h>
-#include <strings.h>
+#include <netdb.h>
 
+#define SERVER_TCP_PORT 3000    /* Default port */
+#define BUFLEN 256              /* Buffer length */
 
+int main(int argc, char *argv[]) {
+    int sd, port;
+    struct hostent *hp;
+    struct sockaddr_in server;
+    char buffer[BUFLEN], filename[BUFLEN];
+    int n;
 
-#define SERVER_TCP_PORT 3000	/* well-known port */
-#define BUFLEN		256	/* buffer length */
-
-int main(int argc, char **argv)
-{
-	int 	n, i, bytes_to_read;
-	int 	sd, port;
-	struct	hostent		*hp;
-	struct	sockaddr_in server;
-	char	*host, *bp, rbuf[BUFLEN], sbuf[BUFLEN];
-
-	switch(argc){
-	case 2:
-		host = argv[1];
-		port = SERVER_TCP_PORT;
-		break;
-	case 3:
-		host = argv[1];
-		port = atoi(argv[2]);
-		break;
-	default:
-		fprintf(stderr, "Usage: %s host [port]\n", argv[0]);
-		exit(1);
-	}
-
-	/* Create a stream socket	*/	
-	if ((sd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-		fprintf(stderr, "Can't creat a socket\n");
-		exit(1);
-	}
-
-	bzero((char *)&server, sizeof(struct sockaddr_in));
-	server.sin_family = AF_INET;
-	server.sin_port = htons(port);
-	if (hp = gethostbyname(host)) 
-	  bcopy(hp->h_addr, (char *)&server.sin_addr, hp->h_length);
-	else if ( inet_aton(host, (struct in_addr *) &server.sin_addr) ){
-	  fprintf(stderr, "Can't get server's address\n");
-	  exit(1);
-	}
-
-	/* Connecting to the server */
-	if (connect(sd, (struct sockaddr *)&server, sizeof(server)) == -1){
-	  fprintf(stderr, "Can't connect \n");
-	  exit(1);
-	}
-
-    bp = rbuf;
-    bytes_to_read = 6;
-    
-
-    /*Write file name to the server, server checks if it exists or prints error. Use special character*/
-    while ((i = read(sd, bp, bytes_to_read)) > 0){
-        bp += i;
-        bytes_to_read -=i;
+    if (argc < 2 || argc > 3) {
+        fprintf(stderr, "Usage: %s <server_host> [port]\n", argv[0]);
+        exit(1);
     }
 
-    // Print the received data
-    printf("Receive: %s \n", rbuf);
-	
+    char *host = argv[1];
+    port = (argc == 3) ? atoi(argv[2]) : SERVER_TCP_PORT;
 
-	close(sd);
-	return(0);
+    /* Create a TCP stream socket */
+    if ((sd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        fprintf(stderr, "Can't create a socket\n");
+        exit(1);
+    }
+
+    /* Set up the server address structure */
+    bzero((char *)&server, sizeof(struct sockaddr_in));
+    server.sin_family = AF_INET;
+    server.sin_port = htons(port);
+
+    /* Get the host address */
+    if ((hp = gethostbyname(host)) == NULL) {
+        fprintf(stderr, "Can't get server's address\n");
+        exit(1);
+    }
+    bcopy(hp->h_addr, (char *)&server.sin_addr, hp->h_length);
+
+    /* Connect to the server */
+    if (connect(sd, (struct sockaddr *)&server, sizeof(server)) == -1) {
+        fprintf(stderr, "Can't connect to server\n");
+        exit(1);
+    }
+
+    /* Get the filename from the user */
+    printf("Enter the filename to request from the server: ");
+    fgets(filename, BUFLEN, stdin);
+    filename[strlen(filename) - 1] = '\0';  // Remove the newline character
+
+    /* Send the filename to the server */
+    write(sd, filename, strlen(filename));
+
+    /* Receive the file or error message from the server */
+    FILE *file = fopen(filename, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "Error opening file to write received data.\n");
+        close(sd);
+        exit(1);
+    }
+
+    while ((n = read(sd, buffer, BUFLEN)) > 0) {
+        if (buffer[0] == 'E') {
+            // Handle error message
+            printf("Error from server: %s\n", buffer + 1);
+			remove(filename); // Delete the created file if there is an error from the server
+            break;
+        } else if (buffer[0] == 'F') {
+            // Write file data to the file
+            fwrite(buffer + 1, sizeof(char), n - 1, file);
+        }
+    }
+
+    fclose(file);
+    close(sd);
+
+    if (n == 0) {
+        printf("File transfer complete.\n");
+    } else if (n < 0) {
+        printf("Error reading from server.\n");
+    }
+
+    return 0;
 }
