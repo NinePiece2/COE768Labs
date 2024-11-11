@@ -1,0 +1,1 @@
+gmake p2p_client p2p_index_server
