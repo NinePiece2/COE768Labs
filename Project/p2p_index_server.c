@@ -158,16 +158,32 @@ void index_server_udp(int server_port) {
         // Handle SEARCH request
         } else if (request.type == SEARCH) {
             printf("Search request for content: %s\n", request.data);
-            FileEntry *entry = find_file_entry(request.data);
-            if (entry) {
-                response.type = LIST_CONTENT;
-                snprintf(response.data, sizeof(response.data), "%s:%d", entry->ip, entry->port);
+            response.type = LIST_CONTENT;
+            response.data[0] = '\0';  // Initialize response data as an empty string
+
+            int found = 0;
+            int i;
+            for (i = 0; i < entry_count; i++) {
+                if (strcmp(file_registry[i].filename, request.data) == 0) {
+                    char entry_info[INET_ADDRSTRLEN + 10];  // Buffer for IP and port
+                    snprintf(entry_info, sizeof(entry_info), "%s:%d", file_registry[i].ip, file_registry[i].port);
+                    if (found > 0) {
+                        strncat(response.data, ", ", sizeof(response.data) - strlen(response.data) - 1);
+                    }
+                    strncat(response.data, entry_info, sizeof(response.data) - strlen(response.data) - 1);
+                    found = 1;
+                }
+            }
+
+            if (found) {
+                // Send response with all entries found
+                sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
             } else {
                 response.type = ERROR;
                 strcpy(response.data, "File not found.");
+                // Send response to the client
+                sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
             }
-            // Send response to the client
-            sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
         }
     }
     close(sd);
