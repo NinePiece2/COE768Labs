@@ -11,13 +11,13 @@ INCLUDE =
 
 
 DEFS =
-CFLAGS = ${DEFS} ${INCLUDE}
+CFLAGS = ${DEFS} ${INCLUDE} -pthread
 
 p2p_client:
-	${CC} -o p2p_client p2p_client.c -lnsl
+	${CC} -o p2p_client p2p_client.c ${CFLAGS} -lnsl
 
 p2p_index_server:
-	${CC} -o p2p_index_server p2p_index_server.c -lnsl
+	${CC} -o p2p_index_server p2p_index_server.c ${CFLAGS} -lnsl
 
 
 clean: FRC
