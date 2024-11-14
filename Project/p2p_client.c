@@ -41,7 +41,8 @@ int registry_count = 0;                   // Track the number of registered file
 // - filename: The name of the file to check
 // Returns 1 if the file is registered, 0 otherwise
 int is_file_registered(const char *filename) {
-    for (int i = 0; i < registry_count; i++) {
+    int i;
+    for (i = 0; i < registry_count; i++) {
         if (strcmp(registry[i].filename, filename) == 0) {
             return 1;  // File is already registered
         }
@@ -53,10 +54,11 @@ int is_file_registered(const char *filename) {
 // Parameters:
 // - filename: The name of the file to remove
 void remove_registry_entry(const char *filename) {
-    for (int i = 0; i < registry_count; i++) {
+    int i, j;
+    for (i = 0; i < registry_count; i++) {
         if (strcmp(registry[i].filename, filename) == 0) {
             pthread_cancel(registry[i].thread_id);  // Cancel the thread serving the file
-            for (int j = i; j < registry_count - 1; j++) {
+            for (j = i; j < registry_count - 1; j++) {
                 registry[j] = registry[j + 1];  // Shift remaining entries
             }
             registry_count--;
@@ -86,7 +88,8 @@ void add_registry_entry(const char *filename, int port, pthread_t thread_id) {
 // - server_ip: IP address of the index server
 // - server_port: Port number of the index server
 void cleanup_on_exit(const char *server_ip, int server_port) {
-    for (int i = 0; i < registry_count; i++) {
+    int i;
+    for (i = 0; i < registry_count; i++) {
         deregister_content(server_ip, server_port, registry[i].filename);
         pthread_cancel(registry[i].thread_id);
     }

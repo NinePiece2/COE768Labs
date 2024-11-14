@@ -45,10 +45,11 @@ int add_file_entry(const char *filename, const char *ip, int port) {
 // - filename: The name of the file to deregister
 // - ip: The IP address associated with the file
 int remove_file_entry(const char *filename, const char *ip) {
-    for (int i = 0; i < entry_count; i++) {
+    int i, j;
+    for (i = 0; i < entry_count; i++) {
         if (strcmp(file_registry[i].filename, filename) == 0 && strcmp(file_registry[i].ip, ip) == 0) {
             // Shift remaining entries to fill the gap
-            for (int j = i; j < entry_count - 1; j++) {
+            for (j = i; j < entry_count - 1; j++) {
                 file_registry[j] = file_registry[j + 1];
             }
             entry_count--;
@@ -65,7 +66,8 @@ int remove_file_entry(const char *filename, const char *ip) {
 // - filename: The name of the file to search
 // Returns a pointer to the file entry if found, otherwise NULL
 FileEntry *find_file_entry(const char *filename) {
-    for (int i = 0; i < entry_count; i++) {
+    int i;
+    for (i = 0; i < entry_count; i++) {
         if (strcmp(file_registry[i].filename, filename) == 0) {
             return &file_registry[i];
         }
