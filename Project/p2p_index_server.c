@@ -44,20 +44,23 @@ int add_file_entry(const char *filename, const char *ip, int port) {
 // Parameters:
 // - filename: The name of the file to deregister
 // - ip: The IP address associated with the file
-int remove_file_entry(const char *filename, const char *ip) {
+// - port: The port number associated with the file
+int remove_file_entry(const char *filename, const char *ip, int port) {
     int i, j;
     for (i = 0; i < entry_count; i++) {
-        if (strcmp(file_registry[i].filename, filename) == 0 && strcmp(file_registry[i].ip, ip) == 0) {
+        if (strcmp(file_registry[i].filename, filename) == 0 &&
+            strcmp(file_registry[i].ip, ip) == 0 &&
+            file_registry[i].port == port) {
             // Shift remaining entries to fill the gap
             for (j = i; j < entry_count - 1; j++) {
                 file_registry[j] = file_registry[j + 1];
             }
             entry_count--;
-            printf("Deregistered file: %s from IP: %s\n", filename, ip);
+            printf("Deregistered file: %s from IP: %s and port: %d\n", filename, ip, port);
             return 0;
         }
     }
-    printf("File not found in registry: %s at IP: %s\n", filename, ip);
+    printf("File not found in registry: %s at IP: %s and port: %d\n", filename, ip, port);
     return -1;
 }
 
@@ -144,13 +147,20 @@ void index_server_udp(int server_port) {
         } else if (request.type == DEREGISTER) {
             printf("Deregister request for content: %s\n", request.data);
 
-            // Use client IP address in deregistration
-            if (remove_file_entry(request.data, client_ip) == 0) {
-                response.type = ACKNOWLEDGE;
-                strcpy(response.data, "Deregistration successful.");
+            // Parse filename, IP, and port from the request data
+            char filename[FILENAME_SIZE];
+            int client_port;
+            if (sscanf(request.data, "%99[^:]:%d", filename, &client_port) == 2) {
+                if (remove_file_entry(filename, client_ip, client_port) == 0) {
+                    response.type = ACKNOWLEDGE;
+                    strcpy(response.data, "Deregistration successful.");
+                } else {
+                    response.type = ERROR;
+                    strcpy(response.data, "Deregistration failed.");
+                }
             } else {
                 response.type = ERROR;
-                strcpy(response.data, "Deregistration failed.");
+                strcpy(response.data, "Invalid deregistration format.");
             }
             // Send response to the client
             sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);

@@ -9,9 +9,10 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include "constants.h"
+#include <netdb.h>  
 
 // Function prototypes
-void deregister_content(const char *server_ip, int server_port, const char *filename);
+void deregister_content(const char *server_ip, int server_port, const char *filename, int client_port);
 void *tcp_server_thread(void *args);
 
 // Structure to pass arguments to the TCP server thread
@@ -83,6 +84,21 @@ void add_registry_entry(const char *filename, int port, pthread_t thread_id) {
     }
 }
 
+// Gets the port number for a given filename
+// Parameters:
+// - filename: The name of the file to find
+// Returns the port number if found, otherwise returns -1
+int get_port_for_filename(const char *filename) {
+    int i;
+    for (i = 0; i < registry_count; i++) {
+        if (strcmp(registry[i].filename, filename) == 0) {
+            return registry[i].port;  // Return the port for the file
+        }
+    }
+    printf("File '%s' not found in the registry.\n", filename);
+    return -1;  // Return -1 if the file is not found
+}
+
 // Deregisters all files on exit
 // Parameters:
 // - server_ip: IP address of the index server
@@ -90,7 +106,7 @@ void add_registry_entry(const char *filename, int port, pthread_t thread_id) {
 void cleanup_on_exit(const char *server_ip, int server_port) {
     int i;
     for (i = 0; i < registry_count; i++) {
-        deregister_content(server_ip, server_port, registry[i].filename);
+        deregister_content(server_ip, server_port, registry[i].filename, registry[i].port);
         pthread_cancel(registry[i].thread_id);
     }
     registry_count = 0;
@@ -148,7 +164,8 @@ void register_content(const char *server_ip, int server_port, const char *filena
 // - server_ip: IP address of the index server
 // - server_port: Port number of the index server
 // - filename: The name of the file to deregister
-void deregister_content(const char *server_ip, int server_port, const char *filename) {
+// - client_port: Port number of the client
+void deregister_content(const char *server_ip, int server_port, const char *filename, int client_port) {
     int sd;
     struct sockaddr_in server;
     struct pdu request;
@@ -168,14 +185,11 @@ void deregister_content(const char *server_ip, int server_port, const char *file
 
     // Prepare the deregistration request
     request.type = DEREGISTER;
-    strncpy(request.data, filename, sizeof(request.data));
+    snprintf(request.data, sizeof(request.data), "%s:%d", filename, client_port);
 
     // Send the deregistration request to the index server
     sendto(sd, &request, sizeof(request), 0, (struct sockaddr *)&server, server_len);
     close(sd);
-
-    // Remove the file from the local registry
-    remove_registry_entry(filename);
 }
 
 // Starts a TCP server to serve files to requesting peers
@@ -441,12 +455,17 @@ int main(int argc, char *argv[]) {
             pthread_create(&thread_id, NULL, tcp_server_thread, args);
             pthread_detach(thread_id);
 
+            add_registry_entry(filename, port, thread_id);
+
         } else if (strcmp(command, "deregister") == 0) {
             char filename[100];
             printf("Enter filename to deregister: ");
             scanf("%s", filename);
 
-            deregister_content(index_server_ip, index_server_port, filename);
+
+            int client_port = get_port_for_filename(filename);
+
+            deregister_content(index_server_ip, index_server_port, filename, client_port);
 
         } else if (strcmp(command, "search") == 0) {
             char filename[100];
