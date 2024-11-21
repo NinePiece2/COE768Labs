@@ -381,7 +381,7 @@ void search_content(const char *server_ip, int server_port, const char *filename
     if (recvfrom(sd, &response, sizeof(response), 0, (struct sockaddr *)&server, &server_len) == -1) {
         perror("Failed to receive response");
     } else if (response.type == LIST_CONTENT) {
-        printf("Peers with file '%s': %s\n", filename, response.data);
+        printf("Peers with files %s\n", response.data);
     } else if (response.type == ERROR) {
         printf("Error: %s\n", response.data);
     }
@@ -409,11 +409,11 @@ int main(int argc, char *argv[]) {
 
         if (strcmp(command, "register") == 0) {
             char filename[100];
-            int port;
             printf("Enter filename to register: ");
             scanf("%s", filename);
-            printf("Enter port for serving the file: ");
-            scanf("%d", &port);
+            // printf("Enter port for serving the file: ");
+            // scanf("%d", &port);
+            int port = get_random_port();
 
             if (is_file_registered(filename)) {
                 printf("File '%s' is already registered.\n", filename);
@@ -469,10 +469,10 @@ int main(int argc, char *argv[]) {
 
         } else if (strcmp(command, "search") == 0) {
             char filename[100];
-            printf("Enter filename to search: ");
-            scanf("%s", filename);
+            // printf("Enter filename to search: ");
+            // scanf("%s", filename);
 
-            // Search for peers with the specified file
+            // Search for peers
             search_content(index_server_ip, index_server_port, filename);
 
         } else if (strcmp(command, "exit") == 0) {

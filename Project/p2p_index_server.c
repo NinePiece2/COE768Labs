@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "constants.h"
+#include <limits.h> 
 
 // Structure to store file information
 // filename: Name of the file to be shared
@@ -16,7 +17,12 @@ typedef struct {
     char filename[FILENAME_SIZE];
     char ip[INET_ADDRSTRLEN];
     int port;
+    int timeUsed;
 } FileEntry;
+
+typedef struct {
+    char filename[FILENAME_SIZE];
+} FoundEntry;
 
 // File registry to store registered files
 FileEntry file_registry[MAX_ENTRIES];  // Array to store registered files
@@ -35,6 +41,7 @@ int add_file_entry(const char *filename, const char *ip, int port) {
     strncpy(file_registry[entry_count].filename, filename, FILENAME_SIZE);
     strncpy(file_registry[entry_count].ip, ip, INET_ADDRSTRLEN);
     file_registry[entry_count].port = port;
+    file_registry[entry_count].timeUsed = 0;
     entry_count++;
     printf("Registered file: %s at %s:%d\n", filename, ip, port);
     return 0;
@@ -165,24 +172,54 @@ void index_server_udp(int server_port) {
             // Send response to the client
             sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
 
-        // Handle SEARCH request
+        // Handle SEARCH request to find each file's least used server
         } else if (request.type == SEARCH) {
-            printf("Search request for content: %s\n", request.data);
+            printf("Search request for content\n");
             response.type = LIST_CONTENT;
             response.data[0] = '\0';  // Initialize response data as an empty string
 
             int found = 0;
-            int i;
-            for (i = 0; i < entry_count; i++) {
-                if (strcmp(file_registry[i].filename, request.data) == 0) {
-                    char entry_info[INET_ADDRSTRLEN + 10];  // Buffer for IP and port
-                    snprintf(entry_info, sizeof(entry_info), "%s:%d", file_registry[i].ip, file_registry[i].port);
-                    if (found > 0) {
+            FoundEntry files_found[MAX_ENTRIES];
+
+            for (int j = 0; j < entry_count; j++) {
+                int exists = 0;
+                for (int k = 0; k < found; k++) {
+                    if (strcmp(file_registry[j].filename, files_found[k].filename) == 0) {
+                        exists = 1;
+                        break;
+                    }
+                }
+
+                if (!exists) {
+                    // Find the least used entry for the current filename
+                    int min_time_used = INT_MAX;
+                    int min_index = -1;
+
+                    for (int i = 0; i < entry_count; i++) {
+                        if (strcmp(file_registry[i].filename, file_registry[j].filename) == 0 &&
+                            file_registry[i].timeUsed < min_time_used) {
+                            min_time_used = file_registry[i].timeUsed;
+                            min_index = i;
+                        }
+                    }
+
+                    // Add the least used entry to the response
+                    if (min_index != -1) {
+                        strcpy(files_found[found].filename, file_registry[min_index].filename);
+                        found++;
+
+                        file_registry[min_index].timeUsed++;
+                        char entry_info[FILENAME_SIZE + INET_ADDRSTRLEN + 10];
+                        snprintf(entry_info, sizeof(entry_info), "%s:%s:%d", file_registry[min_index].filename, file_registry[min_index].ip, file_registry[min_index].port);
+                        strncat(response.data, entry_info, sizeof(response.data) - strlen(response.data) - 1);
                         strncat(response.data, ", ", sizeof(response.data) - strlen(response.data) - 1);
                     }
-                    strncat(response.data, entry_info, sizeof(response.data) - strlen(response.data) - 1);
-                    found = 1;
                 }
+            }
+
+            // Remove the trailing comma and space
+            if (strlen(response.data) > 2) {
+                response.data[strlen(response.data) - 2] = '\0';
             }
 
             if (found) {
@@ -190,7 +227,7 @@ void index_server_udp(int server_port) {
                 sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
             } else {
                 response.type = ERROR;
-                strcpy(response.data, "File not found.");
+                strcpy(response.data, "File(s) not found, no data registered.");
                 // Send response to the client
                 sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
             }
