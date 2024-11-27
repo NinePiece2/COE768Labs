@@ -37,6 +37,11 @@ typedef struct {
 FileRegistryEntry registry[MAX_ENTRIES];  // Array to store active file servers
 int registry_count = 0;                   // Track the number of registered files
 
+typedef struct {
+    char ip[INET_ADDRSTRLEN];
+    int port;
+} IpPortTuple;
+
 // Checks if a file is already registered
 // Parameters:
 // - filename: The name of the file to check
@@ -125,17 +130,13 @@ int get_random_port() {
 // Parameters:
 // - server_ip: IP address of the index server
 // - server_port: Port number of the index server
-// - filename: The name of the file to register
+// - peer_name: The name of the peer registering the content (fixed size 10 bytes)
+// - filename: The name of the file to register (fixed size 10 bytes)
 // - tcp_port: The port number to serve the file
-void register_content(const char *server_ip, int server_port, const char *filename, int tcp_port) {
-    if (is_file_registered(filename)) {
-        printf("File '%s' is already registered.\n", filename);
-        return;
-    }
-
+void register_content(const char *server_ip, int server_port, const char *peer_name, const char *filename, int tcp_port) {
     int sd;
     struct sockaddr_in server;
-    struct pdu request;
+    struct pdu request, response;
     socklen_t server_len = sizeof(server);
 
     // Create UDP socket
@@ -152,12 +153,31 @@ void register_content(const char *server_ip, int server_port, const char *filena
 
     // Prepare the registration request
     request.type = REGISTER;
-    snprintf(request.data, sizeof(request.data), "%s:%d", filename, tcp_port);
+    snprintf(request.data, sizeof(request.data), "%-10s %-10s %d", peer_name, filename, tcp_port);
 
     // Send the registration request to the index server
     sendto(sd, &request, sizeof(request), 0, (struct sockaddr *)&server, server_len);
+
+    // Wait for a response from the server
+    if (recvfrom(sd, &response, sizeof(response), 0, (struct sockaddr *)&server, &server_len) == -1) {
+        perror("Failed to receive response from index server");
+        close(sd);
+        return;
+    }
+
+    // Handle the response from the index server
+    if (response.type == ACKNOWLEDGE) {
+        printf("Registration successful: %s\n", response.data);
+    } else if (response.type == ERROR) {
+        printf("Error during registration: %s\n", response.data);
+        printf("Please choose a different peer name.\n");
+    } else {
+        printf("Unexpected response from index server.\n");
+    }
+
     close(sd);
 }
+
 
 // Deregisters content with the index server
 // Parameters:
@@ -258,12 +278,13 @@ void start_tcp_server(int port, const char *filename) {
 
             // Send final packet with only the type set to FINAL
             struct pdu end_pdu = { FINAL, {0} };
-            write(new_sd, &end_pdu, sizeof(end_pdu));
+            write(new_sd, &end_pdu, sizeof(end_pdu.type));  // Send only the type
         }
         close(new_sd);
     }
     close(sd);
 }
+
 
 // Downloads a file from a peer
 // Parameters:
@@ -311,8 +332,7 @@ void download_file(const char *peer_ip, int peer_port, const char *filename) {
     // Receive the file from the peer server
     while ((n = read(sd, &response, sizeof(response))) > 0) {
         if (response.type == CONTENT_DATA) {
-            // Write only the actual data without any padding
-            int data_size = n - sizeof(response.type);
+            int data_size = n - 1;
             if (data_size > 0) {
                 fwrite(response.data, 1, data_size, file);
             }
@@ -347,8 +367,68 @@ void *tcp_server_thread(void *args) {
 // Parameters:
 // - server_ip: IP address of the index server
 // - server_port: Port number of the index server
+// - peer_name: The name of the peer to search for the file
 // - filename: The name of the file to search
-void search_content(const char *server_ip, int server_port, const char *filename) {
+IpPortTuple search_content(const char *server_ip, int server_port, const char *peer_name, const char *filename) {
+    int sd;
+    struct sockaddr_in server;
+    struct pdu request, response;
+    socklen_t server_len = sizeof(server);
+    IpPortTuple result = {"", -1};  // Initialize with default values indicating an error
+
+    // Create UDP socket
+    if ((sd = socket(AF_INET, SOCK_DGRAM, 0)) == -1) {
+        perror("Cannot create socket");
+        return result;
+    }
+
+    // Set up server address structure
+    bzero(&server, sizeof(server));
+    server.sin_family = AF_INET;
+    server.sin_port = htons(server_port);
+    inet_pton(AF_INET, server_ip, &server.sin_addr);
+
+    // Prepare the search request
+    request.type = SEARCH;
+    snprintf(request.data, sizeof(request.data), "%-10s %-10s", peer_name, filename);
+
+    // Send the search request to the index server
+    if (sendto(sd, &request, sizeof(request), 0, (struct sockaddr *)&server, server_len) == -1) {
+        perror("Failed to send search request");
+        close(sd);
+        return result;
+    }
+
+    // Receive the response from the server
+    if (recvfrom(sd, &response, sizeof(response), 0, (struct sockaddr *)&server, &server_len) == -1) {
+        perror("Failed to receive response");
+    } else if (response.type == SEARCH) {
+        // Parse IP and port from the response data
+        char ip[INET_ADDRSTRLEN];
+        int port;
+
+        if (sscanf(response.data, "%15[^:]:%d", ip, &port) == 2) {
+            // Successfully parsed IP and port, set the result
+            strncpy(result.ip, ip, sizeof(result.ip));
+            result.port = port;
+            //printf("Found peer: IP = %s, Port = %d\n", result.ip, result.port);
+        } else {
+            printf("Failed to parse IP and port from response: %s\n", response.data);
+        }
+    } else if (response.type == ERROR) {
+        printf("Error: %s\n", response.data);
+    }
+
+    close(sd);
+    return result;
+}
+
+
+// Lists active peers with the registerd files
+// Parameters:
+// - server_ip: IP address of the index server
+// - server_port: Port number of the index server
+void list_content(const char *server_ip, int server_port) {
     int sd;
     struct sockaddr_in server;
     struct pdu request, response;
@@ -367,12 +447,11 @@ void search_content(const char *server_ip, int server_port, const char *filename
     inet_pton(AF_INET, server_ip, &server.sin_addr);
 
     // Prepare the search request
-    request.type = SEARCH;
-    strncpy(request.data, filename, sizeof(request.data));
+    request.type = LIST_CONTENT;
 
     // Send the search request to the index server
     if (sendto(sd, &request, sizeof(request), 0, (struct sockaddr *)&server, server_len) == -1) {
-        perror("Failed to send search request");
+        perror("Failed to send List request");
         close(sd);
         return;
     }
@@ -399,28 +478,32 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    char peer_name[PEER_NAME_SIZE];
+
+    printf("Enter your peer name (10 char max): ");
+    scanf("%s", &peer_name);
+
     char *index_server_ip = argv[1];
     int index_server_port = atoi(argv[2]);
 
     char command[20];
     while (1) {
-        printf("\nEnter a command (register, download, search, deregister, or exit): ");
+        printf("\nEnter a command (register, download, list, search, deregister, or exit): ");
         scanf("%s", command);
 
         if (strcmp(command, "register") == 0) {
             char filename[100];
-            printf("Enter filename to register: ");
+
+            printf("Enter filename to register (10 char max): ");
             scanf("%s", filename);
-            // printf("Enter port for serving the file: ");
-            // scanf("%d", &port);
             int port = get_random_port();
 
-            if (is_file_registered(filename)) {
-                printf("File '%s' is already registered.\n", filename);
-                continue;
-            }
+            // if (is_file_registered(filename)) {
+            //     printf("File '%s' is already registered.\n", filename);
+            //     continue;
+            // }
 
-            register_content(index_server_ip, index_server_port, filename, port);
+            register_content(index_server_ip, index_server_port, peer_name, filename, port);
 
             pthread_t thread_id;
             ServerArgs *args = malloc(sizeof(ServerArgs));
@@ -432,21 +515,25 @@ int main(int argc, char *argv[]) {
             add_registry_entry(filename, port, thread_id);
 
         } else if (strcmp(command, "download") == 0) {
-            char peer_ip[INET_ADDRSTRLEN];
-            int peer_port;
+
             char filename[100];
-            printf("Enter peer IP: ");
-            scanf("%s", peer_ip);
-            printf("Enter peer port: ");
-            scanf("%d", &peer_port);
+            char download_from_peer_name[PEER_NAME_SIZE];
+            // printf("Enter peer IP: ");
+            // scanf("%s", peer_ip);
+            // printf("Enter peer port: ");
+            // scanf("%d", &peer_port);
+
+            printf("Enter peer name to download from: ");
+            scanf("%s", download_from_peer_name);
             printf("Enter filename to download: ");
             scanf("%s", filename);
 
-            download_file(peer_ip, peer_port, filename);
+            IpPortTuple ipAndPort = search_content(index_server_ip, index_server_port, download_from_peer_name, filename);
+            download_file(ipAndPort.ip, ipAndPort.port, filename);
 
             int port = get_random_port();
 
-            register_content(index_server_ip, index_server_port, filename, port);
+            register_content(index_server_ip, index_server_port, peer_name, filename, port);
 
             pthread_t thread_id;
             ServerArgs *args = malloc(sizeof(ServerArgs));
@@ -467,13 +554,27 @@ int main(int argc, char *argv[]) {
 
             deregister_content(index_server_ip, index_server_port, filename, client_port);
 
+        } else if (strcmp(command, "list") == 0) {
+
+            // List peers and files
+            list_content(index_server_ip, index_server_port);
+
         } else if (strcmp(command, "search") == 0) {
             char filename[100];
-            // printf("Enter filename to search: ");
-            // scanf("%s", filename);
+            char search_from_peer_name[PEER_NAME_SIZE];
 
-            // Search for peers
-            search_content(index_server_ip, index_server_port, filename);
+            printf("Enter peer name to search from: ");
+            scanf("%s", search_from_peer_name);
+
+            printf("Enter filename to search: ");
+            scanf("%s", filename);
+
+            // Search for peer and file
+            IpPortTuple ipAndPort = search_content(index_server_ip, index_server_port, search_from_peer_name, filename);
+
+            // Print tuple
+            printf("%s %d %s %s\n", ipAndPort.ip, ipAndPort.port, search_from_peer_name, filename);
+
 
         } else if (strcmp(command, "exit") == 0) {
             printf("Exiting and cleaning up...\n");
@@ -481,7 +582,7 @@ int main(int argc, char *argv[]) {
             break;
 
         } else {
-            printf("Unknown command. Please enter 'register', 'download', 'search', 'deregister', or 'exit'.\n");
+            printf("Unknown command. Please enter 'register', 'download', 'list', 'search', 'deregister', or 'exit'.\n");
         }
     }
 

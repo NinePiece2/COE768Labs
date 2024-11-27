@@ -5,7 +5,8 @@
 #define SERVER_PORT 15000    // Default server port for the index server
 #define BUFLEN 256           // Buffer length for PDU
 #define MAX_ENTRIES 100      // Maximum number of registered files
-#define FILENAME_SIZE 100    // Maximum size for filenames
+#define FILENAME_SIZE 11    // Maximum size for filenames
+#define PEER_NAME_SIZE 11   // Maximum size for peer names
 
 // Define PDU Types
 #define REGISTER 'R'

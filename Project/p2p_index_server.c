@@ -18,6 +18,7 @@ typedef struct {
     char ip[INET_ADDRSTRLEN];
     int port;
     int timeUsed;
+    char peerName[PEER_NAME_SIZE];
 } FileEntry;
 
 typedef struct {
@@ -33,13 +34,15 @@ int entry_count = 0;                   // Current count of registered entries
 // - filename: The name of the file to register
 // - ip: The IP address of the machine hosting the file
 // - port: The port number for access
-int add_file_entry(const char *filename, const char *ip, int port) {
+// - peerName: The name of the peer hosting the file
+int add_file_entry(const char *filename, const char *ip, int port, char *peerName) {
     if (entry_count >= MAX_ENTRIES) {
         printf("Registry full, cannot register more files.\n");
         return -1;
     }
     strncpy(file_registry[entry_count].filename, filename, FILENAME_SIZE);
     strncpy(file_registry[entry_count].ip, ip, INET_ADDRSTRLEN);
+    strncpy(file_registry[entry_count].peerName, peerName, PEER_NAME_SIZE);
     file_registry[entry_count].port = port;
     file_registry[entry_count].timeUsed = 0;
     entry_count++;
@@ -135,17 +138,33 @@ void index_server_udp(int server_port) {
             // Parse filename and port from the request data
             char filename[FILENAME_SIZE];
             int tcp_port;
-            if (sscanf(request.data, "%99[^:]:%d", filename, &tcp_port) == 2) {
-                if (add_file_entry(filename, client_ip, tcp_port) == 0) {
-                    response.type = ACKNOWLEDGE;
-                    strcpy(response.data, "Registration successful.");
-                } else {
+            char peerName[PEER_NAME_SIZE];
+            if (sscanf(request.data, "%10s %10s %d", peerName, filename, &tcp_port) == 3) {
+                // Check if the same peer name and file already exists
+                int conflict = 0;
+                for (int i = 0; i < entry_count; i++) {
+                    if (strcmp(file_registry[i].filename, filename) == 0 && strcmp(file_registry[i].peerName, peerName) == 0) {
+                        conflict = 1;
+                        break;
+                    }
+                }
+
+                if (conflict) {
                     response.type = ERROR;
-                    strcpy(response.data, "Registration failed.");
+                    snprintf(response.data, sizeof(response.data), "Peer name conflict, choose another name.");
+                } else {
+                    // Add file to registry
+                    if (add_file_entry(filename, client_ip, tcp_port, peerName) == 0) {
+                        response.type = ACKNOWLEDGE;
+                        snprintf(response.data, sizeof(response.data), "Registration successful.");
+                    } else {
+                        response.type = ERROR;
+                        snprintf(response.data, sizeof(response.data), "Registration failed.");
+                    }
                 }
             } else {
                 response.type = ERROR;
-                strcpy(response.data, "Invalid registration format.");
+                snprintf(response.data, sizeof(response.data), "Invalid registration format.");
             }
             // Send response to the client
             sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
@@ -172,9 +191,9 @@ void index_server_udp(int server_port) {
             // Send response to the client
             sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
 
-        // Handle SEARCH request to find each file's least used server
-        } else if (request.type == SEARCH) {
-            printf("Search request for content\n");
+        // Handle LIST_CONTENT request to find each file's least used server
+        } else if (request.type == LIST_CONTENT) {
+            printf("List request for content\n");
             response.type = LIST_CONTENT;
             response.data[0] = '\0';  // Initialize response data as an empty string
 
@@ -209,8 +228,8 @@ void index_server_udp(int server_port) {
                         found++;
 
                         file_registry[min_index].timeUsed++;
-                        char entry_info[FILENAME_SIZE + INET_ADDRSTRLEN + 10];
-                        snprintf(entry_info, sizeof(entry_info), "%s:%s:%d", file_registry[min_index].filename, file_registry[min_index].ip, file_registry[min_index].port);
+                        char entry_info[FILENAME_SIZE + PEER_NAME_SIZE + INET_ADDRSTRLEN + 10];
+                        snprintf(entry_info, sizeof(entry_info), "%s:%s:%s:%d", file_registry[min_index].peerName, file_registry[min_index].filename, file_registry[min_index].ip, file_registry[min_index].port);
                         strncat(response.data, entry_info, sizeof(response.data) - strlen(response.data) - 1);
                         strncat(response.data, ", ", sizeof(response.data) - strlen(response.data) - 1);
                     }
@@ -232,6 +251,44 @@ void index_server_udp(int server_port) {
                 sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
             }
         }
+        // Handle SEARCH request
+        else if (request.type == SEARCH) {
+            // Search for a file
+            printf("Search request for content\n");
+            response.type = SEARCH;
+            response.data[0] = '\0';  // Initialize response data as an empty string
+
+            char peer_name[PEER_NAME_SIZE] = {0};  // 10 bytes + null terminator
+            char filename[FILENAME_SIZE] = {0};
+            sscanf(request.data, "%10s %10s", peer_name, filename);
+            printf("Requested data: %s\n", request.data);
+            printf("Peer name: %s, Filename: %s\n", peer_name, filename);
+            int found = 0;
+            int i;
+            for (i = 0; i < entry_count; i++) {
+                if (strcmp(file_registry[i].filename, filename) == 0) {
+                    // Check if the peer name matches
+                    if (strcmp(file_registry[i].peerName, peer_name) == 0) {
+                        char entry_info[INET_ADDRSTRLEN + 10];  // Buffer for IP and port
+                        snprintf(entry_info, sizeof(entry_info), "%s:%d", file_registry[i].ip, file_registry[i].port);
+                        
+                        strncat(response.data, entry_info, sizeof(response.data) - strlen(response.data) - 1);
+                        found = 1;
+                    }
+                }
+            }
+
+            if (found) {
+                // Send response with the found entry
+                sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
+            } else {
+                response.type = ERROR;
+                strcpy(response.data, "File not found.");
+                // Send response to the client
+                sendto(sd, &response, sizeof(response), 0, (struct sockaddr *)&client, client_len);
+            }
+        }
+
     }
     close(sd);
 }
