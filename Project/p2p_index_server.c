@@ -142,7 +142,8 @@ void index_server_udp(int server_port) {
             if (sscanf(request.data, "%10s %10s %d", peerName, filename, &tcp_port) == 3) {
                 // Check if the same peer name and file already exists
                 int conflict = 0;
-                for (int i = 0; i < entry_count; i++) {
+                int i;
+                for (i = 0; i < entry_count; i++) {
                     if (strcmp(file_registry[i].filename, filename) == 0 && strcmp(file_registry[i].peerName, peerName) == 0) {
                         conflict = 1;
                         break;
@@ -199,10 +200,11 @@ void index_server_udp(int server_port) {
 
             int found = 0;
             FoundEntry files_found[MAX_ENTRIES];
+            int i, j, k;
 
-            for (int j = 0; j < entry_count; j++) {
+            for (j = 0; j < entry_count; j++) {
                 int exists = 0;
-                for (int k = 0; k < found; k++) {
+                for (k = 0; k < found; k++) {
                     if (strcmp(file_registry[j].filename, files_found[k].filename) == 0) {
                         exists = 1;
                         break;
@@ -214,7 +216,7 @@ void index_server_udp(int server_port) {
                     int min_time_used = INT_MAX;
                     int min_index = -1;
 
-                    for (int i = 0; i < entry_count; i++) {
+                    for (i = 0; i < entry_count; i++) {
                         if (strcmp(file_registry[i].filename, file_registry[j].filename) == 0 &&
                             file_registry[i].timeUsed < min_time_used) {
                             min_time_used = file_registry[i].timeUsed;
